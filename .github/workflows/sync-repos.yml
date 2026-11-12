@@ -1,0 +1,27 @@
+name: Sync GitHub repo snapshot
+# Refreshes public/data/repos.json (the fallback used when the live GitHub API
+# call is rate-limited) and commits it. Deploy pipelines that build on push
+# will then publish the new snapshot.
+on:
+  schedule:
+    - cron: '17 */6 * * *'
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: node scripts/sync-repos.mjs
+        env:
+          VITE_GITHUB_USERNAME: ${{ vars.GITHUB_USERNAME || 'maks-labs' }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Commit if changed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add public/data/repos.json
+          git diff --cached --quiet || (git commit -m "chore: refresh repo snapshot" && git push)
