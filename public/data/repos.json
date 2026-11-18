@@ -1,7 +1,21 @@
 {
   "username": "maks-labs",
-  "generatedAt": "2026-11-18T07:23:48.524Z",
+  "generatedAt": "2026-11-18T20:28:20.845Z",
   "repos": [
+    {
+      "id": 1455184328,
+      "name": "portmaks",
+      "description": "Matrix-styled portfolio — Devaansh Makhijani, AI/ML Engineer",
+      "language": "TypeScript",
+      "topics": [],
+      "stars": 0,
+      "forks": 0,
+      "updatedAt": "2026-11-18T11:06:43Z",
+      "url": "https://github.com/maks-labs/portmaks",
+      "homepage": null,
+      "fork": false,
+      "archived": false
+    },
     {
       "id": 1356814631,
       "name": "RentACrowd",
