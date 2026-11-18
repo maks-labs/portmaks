@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Menu, X } from 'lucide-react'
-import { Github } from '../ui/icons'
+import { Github, Linkedin } from '../ui/icons'
 import { githubProfileUrl, site } from '../../config/site'
 import { useActiveSection } from '../../hooks/useActiveSection'
 
@@ -60,6 +60,11 @@ export function Nav() {
           <a className="nav-icon" href={githubProfileUrl} target="_blank" rel="noopener noreferrer" aria-label="GitHub profile (opens in a new tab)">
             <Github size={19} aria-hidden="true" />
           </a>
+          {site.linkedin && (
+            <a className="nav-icon" href={site.linkedin} target="_blank" rel="noopener noreferrer" aria-label="LinkedIn profile (opens in a new tab)">
+              <Linkedin size={18} aria-hidden="true" />
+            </a>
+          )}
           <button
             ref={toggle}
             className="nav-icon nav-toggle"

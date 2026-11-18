@@ -7,6 +7,7 @@ const POOL =
   '0101010101010101' + '0123456789ABCDEF0123456789ABCDEF' + 'ABCDEFGHIJKLMNOPQRSTUVWXYZ' +
   'ｱｲｳｴｵｶｷｸｹｺｻｼｽｾｿﾀﾁﾂﾃﾄﾅﾆﾇﾈﾉﾊﾋﾌﾍﾎﾏﾐﾑﾒﾓﾔﾕﾖﾗﾘﾙﾚﾛﾜﾝ' + 'λσθ∇∑∂∫≈Δπμ'
 const N = POOL.length
+const KANA_RE = /[\uFF66-\uFF9D]/
 const rnd = () => (Math.random() * N) | 0
 export const glyph = () => POOL[rnd()]
 
@@ -31,6 +32,8 @@ interface Column {
   g: Uint8Array; o: number; tier: number
   /** >0 while the column is "pouring" for the hero reveal: falls fast, bright */
   pour: number
+  /** extra storm column added for the reveal; removed once it leaves the screen */
+  temp?: boolean
 }
 
 
@@ -55,6 +58,7 @@ export class MatrixEngine {
   private scrollK = 0
   /** smoothed scroll speed (px/frame); stretches the rain into streaks */
   private warp = 0
+  private dead = false
   private pulseV = 0
   private pointer = { x: -1e4, active: false }
 
@@ -67,7 +71,8 @@ export class MatrixEngine {
 
   private ms(k: keyof typeof T) { return T[k] * this.opts.pace }
   resize() {
-    this.dpr = Math.min(window.devicePixelRatio || 1, this.opts.mobile ? 1.5 : 2)
+    // the rain is atmosphere: 1.5× on Retina is indistinguishable and far cheaper to fill every frame
+    this.dpr = Math.min(window.devicePixelRatio || 1, this.opts.mobile ? 1.25 : 1.5)
     this.w = window.innerWidth
     this.h = window.innerHeight
     this.canvas.width = Math.round(this.w * this.dpr)
@@ -95,7 +100,16 @@ export class MatrixEngine {
       for (let l = 0; l < LEVELS; l++) {
         a.fillStyle = levelColor(l)
         if (l === LEVELS - 1) { a.shadowColor = '#6dffa8'; a.shadowBlur = 6 * this.dpr }
-        for (let i = 0; i < N; i++) a.fillText(POOL[i], px * i + px / 2, px * l + px / 2)
+        for (let i = 0; i < N; i++) {
+          // as in the film, the half-width katakana in the code are mirrored
+          if (KANA_RE.test(POOL[i])) {
+            a.save()
+            a.translate(px * i + px / 2, px * l + px / 2)
+            a.scale(-1, 1)
+            a.fillText(POOL[i], 0, 0)
+            a.restore()
+          } else a.fillText(POOL[i], px * i + px / 2, px * l + px / 2)
+        }
       }
       return { canvas: c, cell }
     })
@@ -127,6 +141,19 @@ export class MatrixEngine {
       c.speed = Math.max(c.speed, 300 + Math.random() * 260)
       c.trail = Math.max(c.trail, 18)
     }
+    // the storm: extra dense streams through the band, on top of the regular columns
+    const pitch = this.opts.mobile ? 16 : 12
+    for (let x = x0 + Math.random() * pitch; x < x1; x += pitch * (0.7 + Math.random() * 0.6)) {
+      const tier = Math.random() < 0.35 ? 2 : 1
+      const g = new Uint8Array(MAX_TRAIL)
+      for (let i = 0; i < MAX_TRAIL; i++) g[i] = rnd()
+      const head = top - 40 - Math.random() * stagger * 1.3
+      this.cols.push({
+        x, head, prev: head, speed: 380 + Math.random() * 320, trail: 14 + ((Math.random() * 14) | 0),
+        step: TIERS[tier].size * 1.1, carry: 0, g, o: 0, tier, pour: 1, temp: true,
+      })
+    }
+    this.cols.sort((a, b) => a.tier - b.tier)
   }
 
   private buildColumns() {
@@ -215,8 +242,12 @@ export class MatrixEngine {
         c.g[c.o] = rnd()
       }
       if (Math.random() < 0.06) c.g[(Math.random() * MAX_TRAIL) | 0] = rnd()
-      if (c.head - c.trail * c.step > this.h) this.spawn(c, false)
+      if (c.head - c.trail * c.step > this.h) {
+        if (c.temp) { c.pour = -1; this.dead = true }
+        else this.spawn(c, false)
+      }
     }
+    if (this.dead) { this.cols = this.cols.filter((c) => c.pour !== -1); this.dead = false }
   }
 
   private brightness(): number {

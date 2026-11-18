@@ -4,7 +4,6 @@ import { Fx } from './components/fx/Fx'
 import { WakeUp } from './components/intro/WakeUp'
 import { MatrixHero } from './components/hero/MatrixHero'
 import { Ticker } from './components/ui/Ticker'
-import { Marquee } from './components/ui/Marquee'
 import { Profile } from './components/about/Profile'
 import { Featured } from './components/projects/Featured'
 import { GithubProjects } from './components/projects/GithubProjects'
@@ -18,6 +17,7 @@ export default function App() {
     <RepoProvider>
       <a href="#work" className="skip-link">Skip to projects</a>
       <MatrixRain />
+      <div className="grade" aria-hidden="true" />
       <Nav />
       <main id="main">
         <MatrixHero />
@@ -25,7 +25,6 @@ export default function App() {
         <Profile />
         <Featured />
         <GithubProjects />
-        <Marquee />
         <Experience />
         <Skills />
         <Contact />

@@ -9,6 +9,7 @@
 // Once most of the name has been lit, its contour fades in so the shape reads crisply. When the
 // reveal completes, the code texture dissolves away and hands over to the solid DOM lettering.
 import { glyph } from './matrix'
+import { onScrollFrame } from './scrollLoop'
 
 export interface LineSpec { text: string; left: number; baseline: number; font: string; fontPx: number; letterSpacing: number; color: string; dim: string }
 export interface CharTarget { el: HTMLElement; x: number; y: number; group: number }
@@ -20,13 +21,26 @@ interface Cell { x: number; y: number; line: number; edge: boolean }
 
 /** Rasterise the lines and walk the pixel boundary into smoothed closed loops. */
 function extract(lines: LineSpec[], w: number, h: number, sc: number) {
-  const W = Math.ceil(w * sc)
-  const H = Math.ceil(h * sc)
+  // rasterise only the name's own box, not the whole screen (~5× fewer pixels to scan)
+  const m = document.createElement('canvas').getContext('2d')!
+  let bx0 = Infinity, by0 = Infinity, bx1 = -Infinity, by1 = -Infinity
+  for (const l of lines) {
+    m.font = l.font
+    const tw = m.measureText(l.text).width + l.letterSpacing * l.text.length
+    bx0 = Math.min(bx0, l.left); bx1 = Math.max(bx1, l.left + tw)
+    by0 = Math.min(by0, l.baseline - l.fontPx * 1.05); by1 = Math.max(by1, l.baseline + l.fontPx * 0.35)
+  }
+  const pad = 8
+  const ox = Math.max(0, Math.floor(bx0 - pad))
+  const oy = Math.max(0, Math.floor(by0 - pad))
+  const W = Math.ceil((Math.min(w, bx1 + pad) - ox) * sc)
+  const H = Math.ceil((Math.min(h, by1 + pad) - oy) * sc)
   const off = document.createElement('canvas')
-  off.width = W
-  off.height = H
+  off.width = Math.max(1, W)
+  off.height = Math.max(1, H)
   const o = off.getContext('2d', { willReadFrequently: true })!
   o.scale(sc, sc)
+  o.translate(-ox, -oy)
   o.fillStyle = '#fff'
   o.textBaseline = 'alphabetic'
   for (const l of lines) {
@@ -75,8 +89,8 @@ function extract(lines: LineSpec[], w: number, h: number, sc: number) {
       let sx = 0
       let sy = 0
       for (let k = -3; k <= 3; k++) { const v = raw[(i * step + k + n) % n]; sx += v % VW; sy += (v / VW) | 0 }
-      pts[i * 2] = sx / 7 / sc
-      pts[i * 2 + 1] = sy / 7 / sc
+      pts[i * 2] = sx / 7 / sc + ox
+      pts[i * 2 + 1] = sy / 7 / sc + oy
       cy += pts[i * 2 + 1]
     }
     const cum = new Float32Array(m + 1)
@@ -86,7 +100,7 @@ function extract(lines: LineSpec[], w: number, h: number, sc: number) {
     }
     loops.push({ pts, cum, len: cum[m], line: cy / m < split ? 0 : 1 })
   }
-  const inside = (x: number, y: number) => at(Math.round(x * sc), Math.round(y * sc)) === 1
+  const inside = (x: number, y: number) => at(Math.round((x - ox) * sc), Math.round((y - oy) * sc)) === 1
   return { loops, inside }
 }
 
@@ -130,9 +144,21 @@ export class TypoEngine {
   private settleAt = Infinity
   private built = false
 
+  /** canvas position in the viewport, cached: measuring it every frame forced a synchronous layout */
+  private origin = { x: 0, y: 0 }
+  private offScroll: () => void
+
   constructor(private canvas: HTMLCanvasElement, private opts: TypoOptions) {
     this.ctx = canvas.getContext('2d')!
+    this.offScroll = onScrollFrame(() => this.measureOrigin())
   }
+
+  private measureOrigin() {
+    const r = this.canvas.getBoundingClientRect()
+    this.origin = { x: r.left, y: r.top }
+  }
+
+  dispose() { this.stop(); this.offScroll() }
 
   private ms(v: number) { return v * this.opts.pace }
 
@@ -140,7 +166,8 @@ export class TypoEngine {
     const wasDone = this.doneFired
     this.w = w
     this.h = h
-    this.dpr = Math.min(window.devicePixelRatio || 1, this.opts.mobile ? 1.5 : 2)
+    // atmospheric layer: 1.5× is visually identical to 2× here and fills 44% fewer pixels
+    this.dpr = Math.min(window.devicePixelRatio || 1, this.opts.mobile ? 1.25 : 1.5)
     this.canvas.width = Math.round(w * this.dpr)
     this.canvas.height = Math.round(h * this.dpr)
     this.lines = lines
@@ -184,6 +211,26 @@ export class TypoEngine {
         if (on(x, y)) this.cells.push({ x, y, line: y < split ? 0 : 1, edge: !on(x - c, y) || !on(x + c, y) || !on(x, y - c) || !on(x, y + c) })
     this.cellGlyphs = this.cells.map(() => glyph())
     this.litAt = new Float32Array(this.cells.length).fill(Infinity)
+    this.flashing = []
+
+    // settled glyphs live in a cached layer: painted once when lit, repainted only when they change
+    const mk = () => { const cv = document.createElement('canvas'); cv.width = this.ink.width; cv.height = this.ink.height; return cv }
+    this.layer = mk()
+    const lc = this.layer.getContext('2d')!
+    lc.setTransform(this.dpr, 0, 0, this.dpr, -this.box.x * this.dpr, -this.box.y * this.dpr)
+    lc.textAlign = 'center'
+    lc.textBaseline = 'middle'
+    lc.font = `700 ${Math.round(c * 1.15)}px "JetBrains Mono Variable", ui-monospace, monospace`
+    // the impact flare, pre-rendered once: the contour burning white with a soft halo
+    this.flareCv = mk()
+    const fc = this.flareCv.getContext('2d')!
+    fc.filter = 'blur(6px)'
+    fc.drawImage(this.ink, 0, 0)
+    fc.filter = 'none'
+    fc.drawImage(this.ink, 0, 0)
+    fc.globalCompositeOperation = 'source-atop'
+    fc.fillStyle = '#effff5'
+    fc.fillRect(0, 0, this.flareCv.width, this.flareCv.height)
     this.cellIdx = byX(this.cells.map((q) => q.x))
     this.litCount = 0
 
@@ -193,16 +240,34 @@ export class TypoEngine {
     this.charCount = 0
     this.outlineK = 0
     this.built = true
+    this.measureOrigin()
     if (wasDone || this.opts.reduced) this.finish()
     else this.revealAt = Infinity
     if (!this.running) this.draw()
   }
   private cellGlyphs: string[] = []
+  private flashing: number[] = []
+  private layer!: HTMLCanvasElement
+  private flareCv!: HTMLCanvasElement
+
+  get isBuilt() { return this.built }
+
+  private paintCell(i: number) {
+    const q = this.cells[i]
+    const lc = this.layer.getContext('2d')!
+    const c = this.cell
+    const col = this.lines[q.line]
+    lc.clearRect(q.x - c / 2, q.y - c / 2, c, c)
+    lc.globalAlpha = q.edge ? 0.95 : 0.42
+    lc.fillStyle = q.edge ? (col?.color ?? '#00ff66') : (col?.dim ?? '#0f8a47')
+    lc.fillText(this.cellGlyphs[i], q.x, q.y)
+  }
 
   /** start the downpour: the rain is sent through the hero and starts revealing */
   reveal() {
     if (!this.built || this.doneFired) return
-    const r = this.canvas.getBoundingClientRect()
+    this.measureOrigin()
+    const r = { left: this.origin.x, top: this.origin.y }
     let x0 = this.box.x
     let x1 = this.box.x + this.box.w
     for (const ch of this.chars) { x0 = Math.min(x0, ch.x); x1 = Math.max(x1, ch.x) }
@@ -214,7 +279,7 @@ export class TypoEngine {
 
   private finish() {
     const now = this.e
-    for (let i = 0; i < this.cells.length; i++) if (this.litAt[i] === Infinity) this.litAt[i] = now - 1000
+    for (let i = 0; i < this.cells.length; i++) if (this.litAt[i] === Infinity) { this.litAt[i] = now - 1000; this.paintCell(i) }
     this.litCount = this.cells.length
     this.chars.forEach((ch, i) => { if (!this.charOn[i]) { this.charOn[i] = 1; ch.el.classList.add('on') } })
     this.charCount = this.chars.length
@@ -241,14 +306,13 @@ export class TypoEngine {
     this.e = now - this.t0
     this.step()
     this.draw()
-    if (this.e - this.settleAt > 1400) this.stop()
+    if (this.e - this.settleAt > 1500) this.stop()
   }
 
   /** the core of the effect: watch every falling rain head and light whatever it passes over */
   private catchRain() {
-    const r = this.canvas.getBoundingClientRect()
-    const ox = r.left
-    const oy = r.top
+    const ox = this.origin.x
+    const oy = this.origin.y
     const now = this.e
     this.opts.rain((x, prev, head, size) => {
       if (head <= prev) return
@@ -261,7 +325,7 @@ export class TypoEngine {
           const i = order[j]
           if (this.litAt[i] !== Infinity) continue
           const cy = this.cells[i].y + oy
-          if (cy > prev - 2 && cy <= head + 2) { this.litAt[i] = now; this.litCount++ }
+          if (cy > prev - 2 && cy <= head + 2) { this.litAt[i] = now; this.litCount++; this.flashing.push(i) }
         }
       }
       // intro copy characters under this column
@@ -288,15 +352,19 @@ export class TypoEngine {
       // safety net: anything the rain has missed after the downpour gets swept in from the top
       const late = e - this.revealAt - this.ms(5200)
       if (late > 0) {
-        const r = this.canvas.getBoundingClientRect()
+        const r = { top: this.origin.y }
         const sweepY = this.box.y + (late / this.ms(500)) * (this.h - this.box.y)
-        for (let i = 0; i < this.cells.length; i++) if (this.litAt[i] === Infinity && this.cells[i].y < sweepY) { this.litAt[i] = e; this.litCount++ }
+        for (let i = 0; i < this.cells.length; i++) if (this.litAt[i] === Infinity && this.cells[i].y < sweepY) { this.litAt[i] = e; this.litCount++; this.flashing.push(i) }
         this.chars.forEach((ch, i) => { if (!this.charOn[i] && ch.y + r.top < sweepY + r.top) { this.charOn[i] = 1; this.charCount++; ch.el.classList.add('on') } })
       }
       if (this.litCount >= this.cells.length && this.charCount >= this.chars.length) this.finish()
     }
 
-    for (let k = 0; k < 4; k++) { const i = (Math.random() * this.cellGlyphs.length) | 0; this.cellGlyphs[i] = glyph() }
+    // a few settled glyphs change each frame, so the letters stay alive (repainted in the cache only)
+    for (let k = 0; k < 5 && this.cells.length; k++) {
+      const i = (Math.random() * this.cells.length) | 0
+      if (this.litAt[i] !== Infinity && e - this.litAt[i] > 260) { this.cellGlyphs[i] = glyph(); this.paintCell(i) }
+    }
   }
 
   private draw() {
@@ -305,39 +373,86 @@ export class TypoEngine {
     ctx.clearRect(0, 0, this.w, this.h)
     if (!this.built) return
     const e = this.e
-    ctx.textAlign = 'center'
-    ctx.textBaseline = 'middle'
-    const c = this.cell
-    ctx.font = `700 ${Math.round(c * 1.15)}px "JetBrains Mono Variable", ui-monospace, monospace`
-    const fadeOut = 1 - Math.min(1, Math.max(0, (e - this.settleAt) / 1200))
-    if (fadeOut <= 0) return
+    const b = this.box
+    const since = e - this.settleAt
+    const fadeOut = 1 - Math.min(1, Math.max(0, since / 1200))
+    // impact: white-hot flare for the first ~half second after the name locks in
+    const flare = this.opts.reduced || since < 0 ? 0 : Math.max(0, 1 - since / 480)
+    const cx = b.x + b.w / 2
+    const cy = b.y + b.h / 2
 
-    // letters made of the code the rain left behind
-    for (let i = 0; i < this.cells.length; i++) {
-      const lit = this.litAt[i]
-      if (lit === Infinity) continue
-      const q = this.cells[i]
-      const d = e - lit
-      const col = this.lines[q.line]
-      if (d < 260) {
+    // charge: a field of light builds behind the letters as the rain fills them in
+    const lit = this.cells.length ? this.litCount / this.cells.length : 0
+    const charge = Math.max(0, Math.min(1, since > 0 ? (1 - since / 900) * 1.4 : lit)) * (this.opts.reduced ? 0 : 1)
+    if (charge > 0.01) {
+      const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, b.w * 0.62)
+      g.addColorStop(0, `rgba(0, 255, 102, ${0.16 * charge + flare * 0.22})`)
+      g.addColorStop(0.55, `rgba(0, 255, 102, ${0.05 * charge})`)
+      g.addColorStop(1, 'rgba(0, 255, 102, 0)')
+      ctx.globalCompositeOperation = 'lighter'
+      ctx.fillStyle = g
+      ctx.fillRect(b.x - b.w * 0.2, b.y - b.h * 0.6, b.w * 1.4, b.h * 2.2)
+      ctx.globalCompositeOperation = 'source-over'
+    }
+
+    if (fadeOut > 0) {
+      // settled code (one drawImage), breathing slightly with the charge
+      ctx.globalAlpha = fadeOut * (1 - this.outlineK * 0.3) * (0.9 + 0.1 * Math.sin(e / 90) * lit)
+      ctx.drawImage(this.layer, b.x, b.y, b.w, b.h)
+      if (flare > 0) {
+        ctx.globalCompositeOperation = 'lighter'
+        ctx.globalAlpha = flare * 0.9
+        ctx.drawImage(this.layer, b.x, b.y, b.w, b.h)
+        ctx.globalCompositeOperation = 'source-over'
+      }
+      // freshly lit cells flash white for a moment before settling into the cache
+      if (this.flashing.length) {
+        ctx.textAlign = 'center'
+        ctx.textBaseline = 'middle'
+        ctx.font = `700 ${Math.round(this.cell * 1.15)}px "JetBrains Mono Variable", ui-monospace, monospace`
         ctx.globalAlpha = fadeOut
         ctx.fillStyle = '#ffffff'
-        ctx.fillText(glyph(), q.x, q.y)
-      } else {
-        // edges settle bright, interiors dim; both fade toward the crisp contour as it arrives
-        const settle = Math.min(1, (d - 260) / 700)
-        ctx.globalAlpha = (q.edge ? 0.95 - this.outlineK * 0.35 : (0.75 - settle * 0.35) * (1 - this.outlineK * 0.25)) * fadeOut
-        ctx.fillStyle = q.edge ? (col?.color ?? '#00ff66') : (col?.dim ?? '#0f8a47')
-        ctx.fillText(this.cellGlyphs[i], q.x, q.y)
+        const still: number[] = []
+        for (const i of this.flashing) {
+          if (e - this.litAt[i] >= 260) { this.paintCell(i); continue }
+          still.push(i)
+          ctx.fillText(glyph(), this.cells[i].x, this.cells[i].y)
+        }
+        this.flashing = still
+      }
+      if (this.outlineK > 0) {
+        ctx.globalAlpha = this.outlineK * fadeOut
+        ctx.drawImage(this.ink, b.x, b.y, b.w, b.h)
+      }
+      if (flare > 0) {
+        // the contour burns white for an instant (pre-rendered)
+        ctx.globalCompositeOperation = 'lighter'
+        ctx.globalAlpha = flare
+        ctx.drawImage(this.flareCv, b.x, b.y, b.w, b.h)
+        ctx.globalCompositeOperation = 'source-over'
       }
     }
 
-    if (this.outlineK > 0) {
-      const b = this.box
-      ctx.globalAlpha = this.outlineK * fadeOut
-      ctx.drawImage(this.ink, b.x, b.y, b.w, b.h)
+    // shockwave: two rings blast outward from the name as it locks in
+    if (!this.opts.reduced && since >= 0 && since < 1300) {
+      const maxR = Math.hypot(this.w, this.h) * 0.75
+      for (const [delay, width] of [[0, 3], [160, 1.5]] as const) {
+        const u = (since - delay) / 1100
+        if (u <= 0 || u >= 1) continue
+        const ease = 1 - Math.pow(1 - u, 3)
+        ctx.beginPath()
+        ctx.ellipse(cx, cy, b.w * 0.35 + ease * maxR, b.h * 0.5 + ease * maxR * 0.62, 0, 0, Math.PI * 2)
+        // a wide faint stroke under a thin bright one reads as a glow, without shadowBlur's cost
+        ctx.globalAlpha = (1 - u) * 0.18
+        ctx.strokeStyle = '#00ff66'
+        ctx.lineWidth = 14 * (1 - u) + 4
+        ctx.stroke()
+        ctx.globalAlpha = (1 - u) * 0.9
+        ctx.strokeStyle = '#9dffc4'
+        ctx.lineWidth = width * (1 - u) + 0.5
+        ctx.stroke()
+      }
     }
-
     ctx.globalAlpha = 1
   }
 }

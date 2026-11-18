@@ -25,6 +25,8 @@ export function MatrixHero() {
   const section = useRef<HTMLElement>(null)
   const canvas = useRef<HTMLCanvasElement>(null)
   const nameRef = useRef<HTMLHeadingElement>(null)
+  const engine = useRef<TypoEngine | null>(null)
+  const revealed = useRef(false)
   const formed = useRainFormed()
   const introDone = useIntroDone()
   const mobile = useIsMobile()
@@ -34,10 +36,10 @@ export function MatrixHero() {
     const sec = section.current
     const cv = canvas.current
     const h1 = nameRef.current
-    // the construction starts only once the cold open has broken into the rain
-    if (!sec || !cv || !h1 || !introDone) return
+    // built early (during the cold open) so the heavy outline tracing never lands on the transition;
+    // the reveal itself starts when the cold open ends
+    if (!sec || !cv || !h1) return
     let disposed = false
-    let revealed = false
     const eng = new TypoEngine(cv, {
       mobile,
       reduced,
@@ -46,6 +48,7 @@ export function MatrixHero() {
       rain: (fn) => rainStore.engine?.forEachHead(fn),
       pour: (x0, x1, top, stagger) => rainStore.engine?.pour(x0, x1, top, stagger),
       onDone: () => {
+        rainStore.engine?.pulse()
         rainStore.markFormed()
         try { sessionStorage.setItem('matrix-seen', '1') } catch { /* private mode */ }
       },
@@ -76,7 +79,7 @@ export function MatrixHero() {
       })
       eng.build(lines, chars, base.width, base.height)
       if (window.scrollY > 40) eng.complete()
-      else if (!revealed) { revealed = true; eng.reveal() }
+      else if (rainStore.introDone && !revealed.current) { revealed.current = true; eng.reveal() }
       sync()
     }
 
@@ -86,7 +89,12 @@ export function MatrixHero() {
       if (visible && !document.hidden) eng.start()
       else eng.stop()
     }
-    document.fonts.ready.then(build)
+    const idle = (fn: () => void) => {
+      if (typeof window.requestIdleCallback === 'function') window.requestIdleCallback(fn, { timeout: 1200 })
+      else setTimeout(fn, 60)
+    }
+    document.fonts.ready.then(() => idle(build))
+    engine.current = eng
 
     const io = new IntersectionObserver(([e]) => { visible = e.isIntersecting; sync() })
     io.observe(sec)
@@ -100,11 +108,6 @@ export function MatrixHero() {
       rt = window.setTimeout(build, 180)
     }
     window.addEventListener('resize', onResize)
-    // impatient visitors: any scroll or key press finishes the construction immediately
-    const skip = () => { eng.complete(); rainStore.engine?.complete() }
-    window.addEventListener('wheel', skip, { passive: true, once: true })
-    window.addEventListener('touchmove', skip, { passive: true, once: true })
-    window.addEventListener('keydown', skip, { once: true })
 
     // leaving the hero: the name drifts up and fades back into the rain
     const inner = sec.querySelector<HTMLElement>('.hero-inner')
@@ -118,17 +121,35 @@ export function MatrixHero() {
     return () => {
       disposed = true
       offScroll()
-      eng.stop()
+      eng.dispose()
       io.disconnect()
       clearTimeout(rt)
       document.removeEventListener('visibilitychange', sync)
       window.removeEventListener('resize', onResize)
+      engine.current = null
+      sec.querySelectorAll('.rt-c.on').forEach((el) => el.classList.remove('on'))
+    }
+  }, [mobile, reduced])
+
+  // The cold open has ended: send the rain through. Skipping is armed only after a beat, so the key
+  // that skipped the cold open doesn't also instantly complete the name.
+  useEffect(() => {
+    if (!introDone) return
+    const eng = engine.current
+    if (eng?.isBuilt && !revealed.current) { revealed.current = true; eng.reveal() }
+    const skip = () => { engine.current?.complete(); rainStore.engine?.complete() }
+    const arm = window.setTimeout(() => {
+      window.addEventListener('wheel', skip, { passive: true, once: true })
+      window.addEventListener('touchmove', skip, { passive: true, once: true })
+      window.addEventListener('keydown', skip, { once: true })
+    }, 700)
+    return () => {
+      clearTimeout(arm)
       window.removeEventListener('wheel', skip)
       window.removeEventListener('touchmove', skip)
       window.removeEventListener('keydown', skip)
-      sec.querySelectorAll('.rt-c.on').forEach((el) => el.classList.remove('on'))
     }
-  }, [mobile, reduced, introDone])
+  }, [introDone])
 
   // Once revealed, the name stays alive: letters near the cursor flicker into code and resolve back,
   // and the heading drifts slightly in depth with the pointer.

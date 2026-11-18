@@ -107,16 +107,19 @@ export function GithubProjects() {
     </div>
   )
 
+  const header = (
+    <SectionHeader index="03" eyebrow="Open source" id="gh-h" title="GitHub Projects">
+      Everything public on my GitHub. Each card opens its repository.
+    </SectionHeader>
+  )
+
   return (
     <section id="github" className={`section ${horizontal ? 'gh-h' : ''}`} aria-labelledby="gh-h">
-      <div className="container">
-        <SectionHeader index="03" eyebrow="Open source" id="gh-h" title="GitHub Projects">
-          Everything public on my GitHub. Each card opens its repository.
-        </SectionHeader>
-      </div>
       {horizontal ? (
+        // the whole section pins as one full frame: heading, counter, cards and footer travel together
         <div ref={wrap} className="ghx">
           <div className="ghx-pin">
+            <div className="container">{header}</div>
             <div className="container ghx-hud mono" aria-hidden="true">
               <span>repository <b ref={counter}>01</b> / {String(items.length).padStart(2, '0')}</span>
               <span className="ghx-track"><span ref={bar} /></span>
@@ -130,6 +133,7 @@ export function GithubProjects() {
         </div>
       ) : (
         <div className="container">
+          {header}
           <ul className="ghgrid" onPointerMove={track} onPointerOut={untrack} aria-busy={status === 'loading'}>
             {items.map((r, i) => <Card key={r.name} r={r} i={i} total={items.length} />)}
           </ul>

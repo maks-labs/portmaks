@@ -34,7 +34,7 @@ export function Contact() {
     e.preventDefault()
     timers.current.forEach(clearTimeout)
     setSent(false)
-    const steps = ['packing message…', 'opening channel → your mail client', 'transmission ready ✓']
+    const steps = ['operator: tracing your line…', 'hardline established → your mail client', 'you are out ✓']
     setLog([])
     steps.forEach((s, i) => timers.current.push(window.setTimeout(() => setLog((l) => [...l, s]), 260 * (i + 1))))
     timers.current.push(window.setTimeout(() => {
@@ -74,7 +74,7 @@ export function Contact() {
         </div>
 
         <form className={`tx ${sent ? 'tx-sent' : ''}`} onSubmit={transmit}>
-          <div className="term-bar mono" aria-hidden="true"><i /><i /><i /><span>transmit.sh — secure channel</span></div>
+          <div className="term-bar mono" aria-hidden="true"><i /><i /><i /><span>hardline.sh — operator standing by</span></div>
           <div className="tx-body mono">
             <label><span className="green">$ from</span><input required value={name} onChange={(e) => setName(e.target.value)} autoComplete="name" placeholder="your name" /></label>
             <label><span className="green">$ message</span><textarea required rows={4} value={msg} onChange={(e) => setMsg(e.target.value)} placeholder="what are we building?" /></label>

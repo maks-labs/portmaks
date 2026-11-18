@@ -7,48 +7,68 @@ const LINES = [
   { text: 'Wake up, Neo...', typed: true, hold: 1700 },
   { text: 'The Matrix has you...', typed: true, hold: 1700 },
   { text: 'Follow the white rabbit.', typed: true, hold: 1600 },
-  { text: 'Knock, knock, Neo.', typed: false, hold: 1900 },
+  { text: 'Knock, knock, Neo.', typed: false, hold: 1500 },
 ]
 const SLICES = 14
+const pad = (n: number) => String(n).padStart(2, '0')
 
 function seen(): boolean {
   try { return sessionStorage.getItem('neo-seen') === '1' } catch { return false }
 }
 
 /**
- * Cold open. Plays once per session; any key, click, scroll or touch skips it.
- * When it ends, the screen glitches and breaks apart into the rain underneath.
+ * Cold open, once per session:
+ *   1. the trace — "Call trans opt: received." stamped with the visitor's own date and time,
+ *      then "Trace program: running" while numbers race;
+ *   2. "Wake up, Neo…" — and on "Knock, knock, Neo." the screen cracks apart into the rain.
+ * Any key, click, scroll or touch skips straight to the crack.
  */
 export function WakeUp() {
   const reduced = useReducedMotion()
   const [show] = useState(() => !seen() && !reduced)
-  const [phase, setPhase] = useState<'type' | 'crack' | 'gone'>('type')
+  const [phase, setPhase] = useState<'trace' | 'wake' | 'crack' | 'gone'>('trace')
   const textRef = useRef<HTMLSpanElement>(null)
-  const skipRef = useRef<HTMLButtonElement>(null)
-  const done = useRef(false)
+  const numsRef = useRef<HTMLDivElement>(null)
+  const phaseRef = useRef(phase)
+  phaseRef.current = phase
+  const timers = useRef<number[]>([])
+  const now = useRef(new Date())
+
+  const clear = () => { timers.current.forEach(clearTimeout); timers.current = [] }
+  const at = (ms: number, fn: () => void) => timers.current.push(window.setTimeout(fn, ms))
+
+  const crack = (fast: boolean) => {
+    if (phaseRef.current === 'crack' || phaseRef.current === 'gone') return
+    clear()
+    try { sessionStorage.setItem('neo-seen', '1') } catch { /* private mode */ }
+    document.documentElement.classList.remove('intro-lock')
+    setPhase('crack')
+    window.setTimeout(() => rainStore.markIntroDone(), fast ? 80 : 280)
+    window.setTimeout(() => setPhase('gone'), 1300)
+  }
 
   useEffect(() => {
     if (!show) { rainStore.markIntroDone(); return }
     document.documentElement.classList.add('intro-lock')
-    skipRef.current?.focus({ preventScroll: true })
-    const timers: number[] = []
-    const at = (ms: number, fn: () => void) => timers.push(window.setTimeout(fn, ms))
-    const el = textRef.current!
 
-    const crack = (fast: boolean) => {
-      if (done.current) return
-      done.current = true
-      timers.forEach(clearTimeout)
-      try { sessionStorage.setItem('neo-seen', '1') } catch { /* private mode */ }
-      setPhase('crack')
-      document.documentElement.classList.remove('intro-lock')
-      window.setTimeout(() => rainStore.markIntroDone(), fast ? 60 : 280)
-      window.setTimeout(() => setPhase('gone'), fast ? 700 : 1300)
+    // 1. the trace
+    const nums = numsRef.current!
+    let raf = 0
+    const runNums = () => {
+      raf = requestAnimationFrame(runNums)
+      let s = ''
+      for (let r = 0; r < 3; r++) {
+        for (let c = 0; c < 26; c++) s += (Math.random() * 10) | 0
+        s += '\n'
+      }
+      nums.textContent = s
     }
+    at(1500, () => { raf = requestAnimationFrame(runNums) })
+    at(3700, () => { cancelAnimationFrame(raf); setPhase('wake') })
 
-    // irregular keystrokes read as a person typing, not a ticker
-    // a beat of blinking cursor before anything is written, and between lines
-    let t = 1200
+    // 2. "Wake up, Neo"; irregular keystrokes read as a person typing
+    const el = textRef.current!
+    let t = 4500
     for (const line of LINES) {
       const start = t
       at(start, () => { el.textContent = '' })
@@ -68,26 +88,32 @@ export function WakeUp() {
     }
     at(t, () => crack(false))
 
-    const skip = (e: Event) => {
-      if (e.type === 'keydown' && ['Shift', 'Meta', 'Alt', 'Control'].includes((e as KeyboardEvent).key)) return
+    const onKey = (e: KeyboardEvent) => {
+      if (['Shift', 'Meta', 'Alt', 'Control', 'Tab'].includes(e.key)) return
       crack(true)
     }
-    window.addEventListener('keydown', skip)
-    window.addEventListener('wheel', skip, { passive: true })
-    window.addEventListener('touchstart', skip, { passive: true })
+    const onSkip = () => crack(true)
+    window.addEventListener('keydown', onKey)
+    window.addEventListener('wheel', onSkip, { passive: true })
+    window.addEventListener('touchstart', onSkip, { passive: true })
     return () => {
-      timers.forEach(clearTimeout)
+      clear()
+      cancelAnimationFrame(raf)
       document.documentElement.classList.remove('intro-lock')
-      window.removeEventListener('keydown', skip)
-      window.removeEventListener('wheel', skip)
-      window.removeEventListener('touchstart', skip)
+      window.removeEventListener('keydown', onKey)
+      window.removeEventListener('wheel', onSkip)
+      window.removeEventListener('touchstart', onSkip)
     }
+    // crack only touches refs and stable setters
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [show])
 
   if (!show || phase === 'gone') return null
+  const d = now.current
+  const stamp = `${pad(d.getMonth() + 1)}-${pad(d.getDate())}-${String(d.getFullYear()).slice(2)} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
 
   return (
-    <div className={`wake ${phase === 'crack' ? 'wake-crack' : ''}`} role="presentation">
+    <div className={`wake is-${phase}`} role="presentation">
       {Array.from({ length: SLICES }, (_, i) => (
         <i
           key={i}
@@ -100,14 +126,24 @@ export function WakeUp() {
           } as React.CSSProperties}
         />
       ))}
+
+      <div className="wake-trace mono" aria-hidden="true">
+        <p className="wt-1">Call trans opt: received. {stamp} REC:Log&gt;<span className="wake-cur" /></p>
+        <p className="wt-2">Trace program: running</p>
+        <div ref={numsRef} className="wt-nums" />
+      </div>
+
       <div className="wake-term mono" aria-hidden="true">
         <span ref={textRef} className="wake-text" /><span className="wake-cur" />
       </div>
+
       <i className="wake-flash" aria-hidden="true" />
-      <button ref={skipRef} className="wake-skip mono" onClick={(e) => { e.stopPropagation(); window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' })) }}>
-        press any key
-      </button>
-      <p className="sr-only" aria-live="polite">Wake up, Neo. The Matrix has you. Follow the white rabbit. Knock, knock, Neo.</p>
+      {(phase === 'trace' || phase === 'wake') && (
+        <button className="wake-skip mono" onClick={(e) => { e.stopPropagation(); crack(true) }}>press any key</button>
+      )}
+      <p className="sr-only" aria-live="polite">
+        Wake up, Neo. The Matrix has you. Follow the white rabbit. Knock, knock, Neo.
+      </p>
     </div>
   )
 }
