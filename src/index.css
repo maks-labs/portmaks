@@ -576,3 +576,11 @@ main { position: relative; z-index: 1; }
   100% { text-shadow: 0 0 0 transparent; }
 }
 @media (prefers-reduced-motion: reduce) { .is-formed .hero-name, .is-formed .name-line { animation: none; } }
+
+/* ───────── Nav: CV download ───────── */
+.nav-cv {
+  display: inline-flex; align-items: center; gap: 0.4rem; min-height: 2.2rem; margin-left: 0.35rem; padding: 0 0.8rem;
+  border: 1px solid var(--line-strong); font-size: 0.68rem; font-weight: 600; letter-spacing: 0.16em; color: var(--text);
+  transition: color 0.25s, border-color 0.25s, background 0.25s;
+}
+.nav-cv:hover, .nav-cv:focus-visible { color: #00170a; background: var(--green); border-color: var(--green); }

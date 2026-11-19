@@ -9,3 +9,5 @@ export const site = {
 
 export const githubProfileUrl = `https://github.com/${site.githubUsername}`
 export const repoUrl = (name: string) => `${githubProfileUrl}/${name}`
+/** served from public/; BASE_URL keeps it working under the GitHub Pages sub-path */
+export const cvUrl = `${import.meta.env.BASE_URL}CV.pdf`

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
-import { Menu, X } from 'lucide-react'
+import { Download, Menu, X } from 'lucide-react'
 import { Github, Linkedin } from '../ui/icons'
-import { githubProfileUrl, site } from '../../config/site'
+import { cvUrl, githubProfileUrl, site } from '../../config/site'
 import { useActiveSection } from '../../hooks/useActiveSection'
 
 const LINKS = [
@@ -65,6 +65,9 @@ export function Nav() {
               <Linkedin size={18} aria-hidden="true" />
             </a>
           )}
+          <a className="nav-cv mono" href={cvUrl} download="Devaansh-Makhijani-CV.pdf" aria-label="Download my CV (PDF)">
+            <Download size={14} aria-hidden="true" /> CV
+          </a>
           <button
             ref={toggle}
             className="nav-icon nav-toggle"
